@@ -968,6 +968,34 @@ test_opencode_status_footer_below_leftbar_floor() {
   pass "matrix: opencode's below-floor status footer is furniture on a 52-column pane"
 }
 
+test_opencode_wide_pane_path_row_and_version_footer() {
+  # Live opencode 1.18.34 on herdr, wide pane (captured 2026-10-09): the model
+  # footer fits on one row that also carries the right-aligned branch, the
+  # pane path is right-aligned on its own envelope row above it, and the
+  # below-floor status footer ends with `• OpenCode 1.18.34` instead of the
+  # keybind hints. The pane-path row read as pending text and the status
+  # footer anchored nothing, so an idle composer refused again.
+  local gap floor wide typed out
+  gap=$(printf '%*s' 100 '')
+  floor=$'  ╹'"$(printf '▀%.0s' $(seq 77))"
+  wide=$'  ┃\n  ┃\n  ┃'"$gap"$'~/.treehouse/vettoc-20b84b/2/ve\n  ┃  Build · GLM 5.3 Flash EXL3 GLM 5.3 Flash (TensorFold)'"$gap"$'fm/vettoc-counties-virginia\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-20b84b/2/vettoc'"$gap"$'457.3K (54%)  ctrl+p commands    • OpenCode 1.18.34'
+  assert_screen "opencode 1.18.34 idle wide pane on herdr" empty "$CAPS_STYLED" "$wide"
+  assert_screen "opencode 1.18.34 idle wide pane on zellij" empty "$CAPS_STYLED_NOID" "$wide"
+  assert_screen "opencode 1.18.34 idle wide pane on cmux/orca" empty "$CAPS_PLAIN" "$wide"
+  # Real typed text in that same wide layout, above the pane-path row, still
+  # refuses.
+  typed=$'  ┃\n  ┃  fix the virginia counts first\n  ┃\n  ┃'"$gap"$'~/.treehouse/vettoc-20b84b/2/ve\n  ┃  Build · GLM 5.3 Flash EXL3 GLM 5.3 Flash (TensorFold)'"$gap"$'fm/vettoc-counties-virginia\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-20b84b/2/vettoc'"$gap"$'457.3K (54%)  ctrl+p commands    • OpenCode 1.18.34'
+  assert_screen "opencode wide-pane typed draft on herdr" pending "$CAPS_STYLED" "$typed"
+  assert_screen "opencode wide-pane typed draft on plain backends" unknown "$CAPS_PLAIN" "$typed"
+  # The path-row exemption is shape-bound: typed text at the composer's own
+  # content column never matches, even when it is path-like or indented.
+  typed=$'  ┃\n  ┃  /usr/local/bin/deploy the parser now\n  ┃\n  ┃'"$gap"$'~/.treehouse/vettoc-20b84b/2/ve\n  ┃  Build · GLM 5.3 Flash EXL3 GLM 5.3 Flash (TensorFold)'"$gap"$'fm/vettoc-counties-virginia\n'"$floor"
+  assert_screen "path-shaped draft at the content column stays pending" pending "$CAPS_STYLED" "$typed"
+  typed=$'  ┃\n  ┃      ~/indented draft note\n  ┃\n  ┃'"$gap"$'~/.treehouse/vettoc-20b84b/2/ve\n  ┃  Build · GLM 5.3 Flash EXL3 GLM 5.3 Flash (TensorFold)'"$gap"$'fm/vettoc-counties-virginia\n'"$floor"
+  assert_screen "indented prose draft stays pending" pending "$CAPS_STYLED" "$typed"
+  pass "matrix: opencode's wide-pane path row and version-marker footer are furniture"
+}
+
 test_bottom_most_candidate_wins() {
   # The one ranking rule: the live composer is bottom-anchored, so a stale
   # decorative box (codex's startup banner) can never outrank the real row
@@ -1084,6 +1112,7 @@ test_lower_dead_shell_invalidates_cursorless_candidate
 test_cursorless_bare_wrap_region_classifies
 test_cursorless_container_rejects_contiguous_lower_activity
 test_opencode_status_footer_below_leftbar_floor
+test_opencode_wide_pane_path_row_and_version_footer
 test_bottom_most_candidate_wins
 test_incomplete_lower_box_invalidates_stale_candidate
 test_titled_bottom_requires_matching_width
