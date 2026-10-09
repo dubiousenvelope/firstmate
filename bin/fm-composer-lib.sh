@@ -476,17 +476,19 @@ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^P
 # text, and only the run's LAST row is ever matched against it.
 FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
 # Opencode also draws its own status footer BELOW the left-bar composer floor:
-# the working directory on the left and right-aligned keybind hints (`ctrl+p`,
-# `commands`) on the right. Composer input never renders below the floor row,
-# so a row down there ending with one of those hints is always harness
-# furniture - and on a 52-column pane the in-composer model footer wraps
-# inside the envelope, which is what leaves this status footer alone below the
-# floor. It is matched only by those right-aligned hints and consulted only
-# for rows below a left-bar envelope's floor, so skipping it can move a false
-# refusal toward a provable verdict but never turn typed text into `empty`:
-# a row leading with a prompt glyph or carrying a box edge is a live lower
-# composer and is refused before this rule is ever applied.
-FM_COMPOSER_OPENCODE_STATUS_FOOTER_RE_DEFAULT='[[:space:]]ctrl\+p$|[[:space:]]commands$'
+# the working directory, context-usage and pane-width cells on the left, the
+# `ctrl+p commands` keybind hints, and a trailing `• OpenCode <version>` marker
+# on the right. Composer input never renders below the floor row, so a row down
+# there carrying one of those markers is always harness furniture - and on a
+# 52-column pane the in-composer model footer wraps inside the envelope, which
+# is what leaves this status footer alone below the floor. The hints are
+# matched by CONTAINMENT, not by row end, because a wide pane lays the same
+# footer out on one row that ends with the version marker instead. It is
+# consulted only for rows below a left-bar envelope's floor, so skipping it can
+# move a false refusal toward a provable verdict but never turn typed text
+# into `empty`: a row leading with a prompt glyph or carrying a box edge is a
+# live lower composer and is refused before this rule is ever applied.
+FM_COMPOSER_OPENCODE_STATUS_FOOTER_RE_DEFAULT='ctrl\+p|[[:space:]]commands([[:space:]]|$)|[[:space:]]OpenCode[[:space:]]+[0-9]'
 # Claude draws its permission-mode hint on its own row directly below the
 # composer (` ⏵⏵ bypass permissions on (shift+tab to cycle)`, ` ⏵⏵ accept edits
 # on`, ` ⏸ plan mode on`; verified live through Herdr on claude 2.1.236). The
@@ -1366,6 +1368,11 @@ _fm_composer_classify_leftbar() {  # <screen> <styled> <first-row> <last-row>
     esac
     fm_composer_normalize_trim_var content
     if [ -z "$content" ]; then row=$((row + 1)); continue; fi
+    # Opencode's wide layout right-aligns the pane path inside the envelope on
+    # its own row; that fragment is pane furniture, never composer input.
+    if _fm_composer_row_is_opencode_pane_path_row "$raw" "$styled"; then
+      row=$((row + 1)); continue
+    fi
     if [ "$skip_wrapped" = 1 ] && [ "$row" -ge "$((last - 1))" ]; then
       row=$((row + 1)); continue
     fi
@@ -1430,6 +1437,40 @@ Pl|an
 Pla|n
 EOF
   return 1
+}
+
+# _fm_composer_row_is_opencode_pane_path_row: 0 when a left-bar envelope row
+# is opencode's own pane path, right-aligned at the pane's far edge and cut to
+# the pane width on a wide layout (`~/.treehouse/vettoc-20b84b/2/ve`). Real
+# composer input starts immediately after the bar at the composer's own
+# content column, so a fragment sitting behind a strictly longer whitespace
+# run is never typed text; requiring the fragment to be a single
+# whitespace-free path-like token keeps even a leading-space draft from
+# matching. Consulted only on rows inside a left-bar envelope.
+_fm_composer_row_is_opencode_pane_path_row() {  # <raw-row> <styled>
+  local raw=$1 styled=$2 body
+  if [ "$styled" = 1 ]; then
+    body=$(printf '%s\n' "$raw" | fm_composer_strip_ghost)
+  else
+    body=$(printf '%s\n' "$raw" | fm_composer_strip_ansi)
+  fi
+  case "$body" in
+    *'┃'*) body=${body#*┃} ;;
+    *) return 1 ;;
+  esac
+  case "$body" in
+    '    '*) ;;
+    *) return 1 ;;
+  esac
+  fm_composer_normalize_trim_var body
+  case "$body" in
+    [~]/*|'/'*) ;;
+    *) return 1 ;;
+  esac
+  case "$body" in
+    *[[:space:]]*) return 1 ;;
+  esac
+  return 0
 }
 
 # _fm_composer_row_is_composer_furniture: 0 when <trimmed-row> is DEMONSTRABLY
