@@ -536,6 +536,18 @@ FM_COMPOSER_IDLE_RE_DEFAULT='^Type a message\.\.\.$|^Ask anything(\.\.\.|…)|^P
 # dimmed mode cell) belongs with a fresh live capture in
 # docs/verification/runtime-backends.md, not with a regex edit.
 FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
+# Opencode also draws its own status footer BELOW the left-bar composer floor:
+# the working directory on the left and right-aligned keybind hints (`ctrl+p`,
+# `commands`) on the right. Composer input never renders below the floor row,
+# so a row down there ending with one of those hints is always harness
+# furniture - and on a 52-column pane the in-composer model footer wraps
+# inside the envelope, which is what leaves this status footer alone below the
+# floor. It is matched only by those right-aligned hints and consulted only
+# for rows below a left-bar envelope's floor, so skipping it can move a false
+# refusal toward a provable verdict but never turn typed text into `empty`:
+# a row leading with a prompt glyph or carrying a box edge is a live lower
+# composer and is refused before this rule is ever applied.
+FM_COMPOSER_OPENCODE_STATUS_FOOTER_RE_DEFAULT='[[:space:]]ctrl\+p$|[[:space:]]commands$'
 # Claude draws its permission-mode hint on its own row directly below the
 # composer (` ⏵⏵ bypass permissions on (shift+tab to cycle)`, ` ⏵⏵ accept edits
 # on`, ` ⏸ plan mode on`; verified live through Herdr on claude 2.1.236). The
@@ -1625,10 +1637,12 @@ _fm_composer_leftbar_cwd_start() {  # <screen> <first-row> <last-row>
 
 # _fm_composer_classify_leftbar: opencode's left-bar composer. Blank rows and
 # the idle hint read empty; the run's LAST row may be the mode/model footer
-# (composer furniture, never typed text), and the right-aligned
-# cwd:branch furniture OpenCode draws there since 1.18.0 (the rows
-# immediately above that footer, recognised by
+# (composer furniture, never typed text), and a narrow pane can split that
+# footer across the last TWO rows, in which case both are furniture; the
+# right-aligned cwd:branch furniture OpenCode draws there since 1.18.0 (the
+# rows immediately above that footer, recognised by
 # _fm_composer_leftbar_cwd_start) is composer furniture too. Real content is
+# pending when styling can prove it real, unknown otherwise.
 # pending when styling can prove it real, unknown otherwise.
 # _fm_composer_row_is_leftbar_footer: 0 when the run's LAST row is opencode's
 # own mode/model/branch line (FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT above)
@@ -1680,8 +1694,25 @@ _fm_composer_leftbar_plain_content() {  # <raw-row> -> plain content on stdout
 _fm_composer_classify_leftbar() {  # <screen> <styled> <first-row> <last-row>
   local screen=$1 styled=$2 first=$3 last=$4
   local row raw content pending_seen=0 footer_re leading_blank=1 placeholder_position=0 cwd_start
+  local skip_wrapped=0 upper_content lower_content
   footer_re=${FM_COMPOSER_LEFTBAR_FOOTER_RE:-$FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT}
   cwd_start=$(_fm_composer_leftbar_cwd_start "$screen" "$first" "$last") || cwd_start=-1
+  # The walk below only ever exempts a one-row footer on the run's last row,
+  # so prove a footer wrapped across the last two rows here and exempt both
+  # of its rows from the content walk.
+  if [ "$last" -gt "$first" ]; then
+    upper_content=$(_fm_composer_row_content "$(_fm_composer_screen_row "$((last - 1))" "$screen")" "$styled")
+    case "$upper_content" in '┃'*) upper_content=${upper_content#┃} ;; esac
+    fm_composer_normalize_trim_var upper_content
+    lower_content=$(_fm_composer_row_content "$(_fm_composer_screen_row "$last" "$screen")" "$styled")
+    case "$lower_content" in '┃'*) lower_content=${lower_content#┃} ;; esac
+    fm_composer_normalize_trim_var lower_content
+    if [ -n "$upper_content" ] && [ -n "$lower_content" ] \
+       && ! fm_composer_idle_matches "$lower_content" "$footer_re" sensitive \
+       && _fm_composer_leftbar_wrapped_footer_pair "$upper_content" "$lower_content"; then
+      skip_wrapped=1
+    fi
+  fi
   row=$first
   while [ "$row" -le "$last" ]; do
     if [ "$cwd_start" -ge 0 ] && [ "$row" -ge "$cwd_start" ]; then
@@ -1694,6 +1725,9 @@ _fm_composer_classify_leftbar() {  # <screen> <styled> <first-row> <last-row>
     esac
     fm_composer_normalize_trim_var content
     if [ -z "$content" ]; then row=$((row + 1)); continue; fi
+    if [ "$skip_wrapped" = 1 ] && [ "$row" -ge "$((last - 1))" ]; then
+      row=$((row + 1)); continue
+    fi
     if [ "$leading_blank" = 1 ] && [ "$row" -gt "$first" ]; then
       placeholder_position=1
     else
@@ -1726,6 +1760,36 @@ _fm_composer_leftbar_floor_row() {  # <trimmed-row>
     *) return 1 ;;
   esac
   [ -z "${blocks//▀/}" ]
+}
+
+# _fm_composer_leftbar_wrapped_footer_pair: 0 when rows <upper> and <lower>
+# are opencode's own mode/model footer split across two rows by a narrow pane.
+# That footer opens with the mode word (`Build` or `Plan`) followed by the `·`
+# separator, and the pane width can cut the word itself, so the upper row ends
+# inside it and the lower row opens with exactly the letters the cut removed,
+# then a space or the row's end. Each allowed upper-row prefix is paired with
+# the completion the lower row must open with. Opencode draws the footer at
+# the bottom of the composer block, below all composer input, so a trailing
+# pair that conspires this precisely is the wrapped footer and never typed
+# text: a live draft still has the real footer rendered under it, and that
+# footer never opens with a bare completion fragment.
+_fm_composer_leftbar_wrapped_footer_pair() {  # <upper-trimmed> <lower-trimmed>
+  local upper=$1 lower=$2 pair comp
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
+    comp=${pair#*|}
+    printf '%s' "$upper" | grep -qE "^${pair%%|*}[[:space:]]*·" || continue
+    printf '%s' "$lower" | grep -qE "^${comp}([[:space:]]|$)" && return 0
+  done <<'EOF'
+B|uild
+Bu|ild
+Bui|ld
+Buil|d
+P|lan
+Pl|an
+Pla|n
+EOF
+  return 1
 }
 
 # _fm_composer_row_is_composer_furniture: 0 when <trimmed-row> is DEMONSTRABLY
@@ -1842,6 +1906,7 @@ _fm_composer_bare_rule_sandwich() {  # <plain-screen> <row>
 
 _fm_composer_select_cursorless() {
   local plain=$1 generic=-1 next boundary raw trimmed glyph bare footer=0
+  local opencode_re
   FM_COMPOSER_SELECTED_KIND=
   FM_COMPOSER_SELECTED_FIRST=-1
   FM_COMPOSER_SELECTED_LAST=-1
@@ -1942,6 +2007,30 @@ _fm_composer_select_cursorless() {
     next=$((boundary + 1))
     if [ "$footer" = 1 ] && [ "$FM_COMPOSER_FOOTER_AFTER" = "$boundary" ]; then
       next=$((FM_COMPOSER_FOOTER_LAST + 1))
+    fi
+    # Opencode's own status footer renders below the left-bar floor, and on a
+    # 52-column pane the wrapped in-composer model footer is what leaves it
+    # there. Skip provable footer rows before the probe resumes: a row leading
+    # with a prompt glyph or carrying a box edge is a live lower composer and
+    # breaks the skip first, so the skip can only move a false refusal toward
+    # a provable verdict, never past a live composer.
+    if [ "$FM_COMPOSER_SELECTED_KIND" = leftbar ]; then
+      opencode_re=${FM_COMPOSER_OPENCODE_STATUS_FOOTER_RE:-$FM_COMPOSER_OPENCODE_STATUS_FOOTER_RE_DEFAULT}
+      while :; do
+        raw=$(_fm_composer_screen_row "$next" "$plain")
+        trimmed=$raw
+        fm_composer_normalize_trim_var trimmed
+        case "$trimmed" in
+          '') break ;;
+        esac
+        fm_composer_row_has_edge "$trimmed" && break
+        if fm_composer_leading_agent_glyph_var glyph "$trimmed" \
+           || fm_composer_leading_shell_glyph_var glyph "$trimmed"; then
+          break
+        fi
+        fm_composer_idle_matches "$trimmed" "$opencode_re" sensitive || break
+        next=$((next + 1))
+      done
     fi
     raw=$(_fm_composer_screen_row "$next" "$plain")
     trimmed=$raw
