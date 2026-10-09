@@ -929,6 +929,45 @@ test_cursorless_container_rejects_contiguous_lower_activity() {
   pass "fm_composer_classify_screen: cursorless containers reject only contiguous unclaimed activity"
 }
 
+test_opencode_status_footer_below_leftbar_floor() {
+  # Live opencode 1.18.34 on herdr, 52-column pane (captured 2026-10-09): the
+  # idle composer's model footer wraps inside the left-bar block, and
+  # opencode's own status footer renders BELOW the floor as two rows. That
+  # footer used to read as a lower live shape, the staleness probe refused,
+  # and a visibly empty prompt answered `unknown`, so exit and relaunch
+  # refused with "composer state is 'unknown', not proven empty".
+  local floor screen typed bare wide out
+  floor=$'  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀'
+  screen=$'  ┃\n  ┃\n  ┃\n  ┃  Buil ·GLM 5.3 Flash EXL3 GLM 5.3 Flash (\n  ┃  d                        TensorFold)\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-57.3K ( ctrl+p\n   20b84b/2/vettoc                      commands'
+  assert_screen "opencode 1.18.34 idle 52-column pane on herdr" empty "$CAPS_STYLED" "$screen"
+  assert_screen "opencode 1.18.34 idle 52-column pane on zellij" empty "$CAPS_STYLED_NOID" "$screen"
+  assert_screen "opencode 1.18.34 idle 52-column pane on cmux/orca" empty "$CAPS_PLAIN" "$screen"
+  # The protection this must NOT remove: real typed text inside that same
+  # block, above its wrapped model footer, still refuses.
+  typed=$'  ┃\n  ┃  fix the login bug first\n  ┃\n  ┃  Buil ·GLM 5.3 Flash EXL3 GLM 5.3 Flash (\n  ┃  d                        TensorFold)\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-57.3K ( ctrl+p\n   20b84b/2/vettoc                      commands'
+  assert_screen "opencode 52-column typed draft on herdr" pending "$CAPS_STYLED" "$typed"
+  assert_screen "opencode 52-column typed draft on plain backends" unknown "$CAPS_PLAIN" "$typed"
+  # A live bare composer below the floor still wins over the stale block above
+  # it, even when its text ends like the status footer's own right-aligned
+  # hints - the skip breaks on a prompt-glyph row before it ever matches.
+  bare=$'  ┃\n  ┃\n  ┃\n  ┃  Buil ·GLM 5.3 Flash EXL3 GLM 5.3 Flash (\n  ┃  d                        TensorFold)\n'"$floor"$'\n  ❯ review the deploy commands'
+  out=$(fm_composer_classify_screen "$CAPS_STYLED" "$bare")
+  [ "$out" = pending ] \
+    || fail "a live bare composer below the floor must still read pending, got '$out'"
+  out=$(fm_composer_classify_screen "$CAPS_PLAIN" "$bare")
+  [ "$out" = unknown ] \
+    || fail "a live bare composer below the floor must never read empty, got '$out'"
+  # The wide-pane layout, where the model footer fits on one row inside the
+  # envelope, is unchanged: idle reads empty through the existing signals and
+  # typed text stays pending.
+  wide=$'  ┃\n  ┃  Ask anything... "What is the tech stack?"\n  ┃\n  ┃  Build · GLM 5.3 Flash EXL3 · high\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-57.3K ( ctrl+p\n   20b84b/2/vettoc                      commands'
+  assert_screen "opencode wide-pane one-row model footer, idle" empty "$CAPS_STYLED" "$wide"
+  assert_screen "opencode wide-pane one-row model footer, cmux/orca" empty "$CAPS_PLAIN" "$wide"
+  wide=$'  ┃\n  ┃  fix the login bug first\n  ┃\n  ┃  Build · GLM 5.3 Flash EXL3 · high\n'"$floor"$'\n   /Users/mia/.treehouse/vettoc-57.3K ( ctrl+p\n   20b84b/2/vettoc                      commands'
+  assert_screen "opencode wide-pane one-row model footer, typed" pending "$CAPS_STYLED" "$wide"
+  pass "matrix: opencode's below-floor status footer is furniture on a 52-column pane"
+}
+
 test_bottom_most_candidate_wins() {
   # The one ranking rule: the live composer is bottom-anchored, so a stale
   # decorative box (codex's startup banner) can never outrank the real row
@@ -1044,6 +1083,7 @@ test_contiguous_transcript_reanchors_on_live_prompt
 test_lower_dead_shell_invalidates_cursorless_candidate
 test_cursorless_bare_wrap_region_classifies
 test_cursorless_container_rejects_contiguous_lower_activity
+test_opencode_status_footer_below_leftbar_floor
 test_bottom_most_candidate_wins
 test_incomplete_lower_box_invalidates_stale_candidate
 test_titled_bottom_requires_matching_width
