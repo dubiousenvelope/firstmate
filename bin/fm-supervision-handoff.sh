@@ -38,6 +38,8 @@ TOKEN=${1:-}
 PREDECESSOR=${2:-}
 case "$TOKEN" in ''|*[!A-Za-z0-9._-]*) exit 2 ;; esac
 case "$PREDECESSOR" in ''|*[!0-9]*) exit 2 ;; esac
+READY_TIMEOUT=${FM_SUPERVISION_HOST_READY_TIMEOUT:-}
+case "$READY_TIMEOUT" in ''|*[!0-9]*) exit 2 ;; esac
 PENDING="$STATE/.supervision-handoff-pending"
 OWNER="$STATE/.supervision-handoff-owner"
 LEFT="$STATE/.supervision-host-left"
@@ -119,7 +121,7 @@ while session_owned && [ -e "$CONFIG/supervision-handoff-ack" ] && [ ! -e "$STAT
   ARM=$!
   ARM_RECORDED=0
   set +m
-  deadline=$((SECONDS + ${FM_SUPERVISION_HOST_READY_TIMEOUT:-25}))
+  deadline=$((SECONDS + READY_TIMEOUT))
   while ! fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME" \
     || ! grep -Eq '^watcher: (started|attached) pid=[0-9]+' "$OUT"; do
     if ! fm_pid_alive "$ARM" || [ "$SECONDS" -ge "$deadline" ]; then
