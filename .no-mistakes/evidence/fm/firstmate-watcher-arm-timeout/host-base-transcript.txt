@@ -1,0 +1,13 @@
+1..1
+# first watcher pid=64416 (host READY_TIMEOUT default; FM_SUPERVISION_HOST_READY_TIMEOUT unset=unset)
+# host exited rc=0 after 31s
+# shim: 1793351185 delaying lock acquisition of watcher 67559 by 28s
+# host.out:
+#   watcher: started pid=64416 (beacon fresh)
+#   signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-supervision-host.gQNH6b/slow-successor/state/demo.status
+# ledger:
+#   start	gen=host-64016-1793351182	primary=claude
+#   pass-through	attended	main-only	signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-supervision-host.gQNH6b/slow-successor/state/demo.status
+#   pass-through	successor-unverified	signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-supervision-host.gQNH6b/slow-successor/state/demo.status
+not ok - host abandoned the slow successor as unverified
+exit=1

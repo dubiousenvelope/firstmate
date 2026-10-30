@@ -1,0 +1,6 @@
+== [change: busy-machine successor, 18s first beat] bin={run-worktree}/bin first-beat-delay=18s elapsed=19s
+   arm> watcher: started pid=17989 (beacon fresh)
+== [base 84aef1c0: same 18s first beat] bin=/tmp/fm-base-bin.lNdsLv/bin first-beat-delay=18s elapsed=12s
+   arm> watcher: FAILED - no live watcher with a fresh beacon
+== [change: 45s first beat exceeds 30s budget (bound still holds)] bin={run-worktree}/bin first-beat-delay=45s elapsed=31s
+   arm> watcher: FAILED - no live watcher with a fresh beacon

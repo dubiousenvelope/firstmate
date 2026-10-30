@@ -1,0 +1,20 @@
+[t+  1.0s] OpenCode 2.2.2 serving; 5 Firstmate plugins active from /private/tmp/fm-base-bin.lNdsLv
+[t+  2.6s] first watcher armed pid=79531
+[t+  2.6s] busy machine from now: each successor watcher's lock acquisition delayed 20s
+[t+ 76.0s] plugin delivered the worker-close wake to the session
+[t+ 76.0s] outcome: FAILED ⁣FIRSTMATE_OP: v1 watcher: WATCHER FIRED - drain queued wakes with bin/fm-wake-drain.sh and handle the reported wake. Watcher continuity is plugin-owned.
+
+signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-oc-slow-no8fq69u/fmhome/state/task.status
+
+watcher: FAILED - OpenCode could not verify a ready successor watcher (failed)
+watcher: FAILED - OpenCode could not restore watcher continuity after 5 retries
+shim log:
+1793351037 delaying lock acquisition of watcher 82430 by 20s
+1793351047 delaying lock acquisition of watcher 93323 by 20s
+1793351059 delaying lock acquisition of watcher 95042 by 20s
+1793351070 delaying lock acquisition of watcher 6693 by 20s
+1793351083 delaying lock acquisition of watcher 11955 by 20s
+1793351098 delaying lock acquisition of watcher 18500 by 20s
+
+lab cleaned
+exit=3
