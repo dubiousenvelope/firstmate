@@ -33,9 +33,9 @@
 //     close carries every such line in order while wake lines keep an
 //     eight-line cap. The host
 //     prints the first cycle's status line as soon as it is verified, so
-//     readiness and the handling handoff work as they do for the arm, with a
-//     longer readiness budget for the host's own startup. On a home that does
-//     not run the host nothing below changes.
+//     readiness and the handling handoff work as they do for the arm, with the
+//     arm's readiness budget floored at 30000 ms. On a home that does not run
+//     the host nothing below changes.
 //
 // Session-generation ownership (stated once here):
 // omp emits session_shutdown for ordinary same-process replacements (/new,
