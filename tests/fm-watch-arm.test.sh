@@ -27,7 +27,7 @@ TMP_ROOT=$(fm_test_tmproot fm-watch-arm-tests)
 # recovery wake. That is a long run of short-lived processes, which a contended
 # host - a changed-suite run beside three other suites - can slow far more than
 # this suite's mostly sleeping poll loops. One re-arm measured about 2s idle, 5-7s
-# beside three concurrent copies, and past the arm's default 10s confirmation
+# beside three concurrent copies, and past the arm's former 10s default confirmation
 # deadline when the case was held to 15% of one CPU. These cases assert recovery,
 # not a deadline, so under the CONTRIBUTING.md fixture-budget rule the arm gets an
 # explicit confirmation budget with headroom, and each wait on it is an

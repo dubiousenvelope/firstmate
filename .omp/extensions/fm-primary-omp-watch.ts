@@ -33,9 +33,9 @@
 //     close carries every such line in order while wake lines keep an
 //     eight-line cap. The host
 //     prints the first cycle's status line as soon as it is verified, so
-//     readiness and the handling handoff work as they do for the arm, with a
-//     longer readiness budget for the host's own startup. On a home that does
-//     not run the host nothing below changes.
+//     readiness and the handling handoff work as they do for the arm, with the
+//     arm's readiness budget floored at 30000 ms. On a home that does not run
+//     the host nothing below changes.
 //
 // Session-generation ownership (stated once here):
 // omp emits session_shutdown for ordinary same-process replacements (/new,
@@ -149,13 +149,10 @@ const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(exte
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
 const retryLimit = positiveInteger("FM_WATCH_REARM_RETRY_LIMIT", 5);
-// 35s on Windows so the budget stays above arm's MSYS confirm default (30s in
-// bin/fm-watch-arm.sh): a slow but successful Git Bash cold start must not be
-// SIGTERMed mid-confirmation. Conditioned on win32 so other platforms keep 12s.
-const armReadyTimeoutMs = positiveInteger(
-  "FM_OMP_ARM_READY_TIMEOUT_MS",
-  process.platform === "win32" ? 35000 : 12000,
-);
+// 35s so the budget stays above arm's confirm default (30s in
+// bin/fm-watch-arm.sh): a slow but successful successor start on a busy machine
+// or a Git Bash cold start must not be SIGTERMed mid-confirmation.
+const armReadyTimeoutMs = positiveInteger("FM_OMP_ARM_READY_TIMEOUT_MS", 35000);
 const hostReadyTimeoutMs = Math.max(armReadyTimeoutMs, 30000);
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";

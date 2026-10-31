@@ -13,14 +13,13 @@ import { contextDirectory, createTurnEndLatch, promptSession, setupEventSubscrip
 // wake line, and the delivered message carries every such line in order while
 // wake lines keep an eight-line cap. The host prints the first cycle's status
 // line as soon as it is verified, so readiness and the handling handoff work
-// as they do for the arm, with a longer readiness budget for the host's own
-// startup. On a home that does not run the host nothing below changes.
+// as they do for the arm, with the arm's readiness budget floored at 30000 ms.
+// On a home that does not run the host nothing below changes.
 const COORDINATOR_KEY = "__firstmateOpenCodeWatchArm";
-// 35s on Windows so the budget stays above arm's MSYS confirm default (30s in
-// bin/fm-watch-arm.sh): a slow but successful Git Bash cold start must not be
-// SIGTERMed mid-confirmation. Conditioned on win32 so other platforms keep 12s.
-const ARM_READY_TIMEOUT_DEFAULT_MS = process.platform === "win32" ? 35000 : 12000;
-const ARM_READY_TIMEOUT_MS = positiveInteger("FM_OPENCODE_ARM_READY_TIMEOUT_MS", ARM_READY_TIMEOUT_DEFAULT_MS);
+// 35s so the budget stays above arm's confirm default (30s in
+// bin/fm-watch-arm.sh): a slow but successful successor start on a busy machine
+// or a Git Bash cold start must not be SIGTERMed mid-confirmation.
+const ARM_READY_TIMEOUT_MS = positiveInteger("FM_OPENCODE_ARM_READY_TIMEOUT_MS", 35000);
 const HOST_READY_TIMEOUT_MS = Math.max(ARM_READY_TIMEOUT_MS, 30000);
 const WAKE_LINE = /^(signal:|stale:|check:|heartbeat($|:))/;
 const HOST_LINE = /^supervision-host:/;

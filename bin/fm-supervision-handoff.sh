@@ -119,7 +119,7 @@ while session_owned && [ -e "$CONFIG/supervision-handoff-ack" ] && [ ! -e "$STAT
   ARM=$!
   ARM_RECORDED=0
   set +m
-  deadline=$((SECONDS + ${FM_SUPERVISION_HOST_READY_TIMEOUT:-25}))
+  deadline=$((SECONDS + ${FM_SUPERVISION_HOST_READY_TIMEOUT:-35}))
   while ! fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME" \
     || ! grep -Eq '^watcher: (started|attached) pid=[0-9]+' "$OUT"; do
     if ! fm_pid_alive "$ARM" || [ "$SECONDS" -ge "$deadline" ]; then
