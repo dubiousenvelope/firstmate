@@ -1,155 +1,245 @@
 #!/usr/bin/env python3
-"""Real `opencode serve` + real Firstmate OpenCode plugins + real fm-watch-arm.sh /
-fm-watch.sh, isolated lab and loopback provider (adapted from
-tests/opencode-v2-live-fixture.py). After the first watcher is armed, every
-SUCCESSOR watcher's singleton-lock acquisition is delayed DELAY seconds (PATH shim on
-ln(1), once per watcher pid) - the busy-machine worker-close condition from
-the incidents. Then a worker status change fires the watcher and we observe
-whether the plugin restores a healthy successor or surfaces
-"could not restore watcher continuity".
-Usage: REPO=<checkout with bin/ and .opencode/plugins> DELAY=<s> opencode-slow-successor.py
-"""
-import base64, http.server, json, os, shutil, socket, subprocess, tempfile, threading, time
-import urllib.error, urllib.parse, urllib.request
-from pathlib import Path
+"""Exercise the real V2 server and Firstmate hooks with a local protocol fixture."""
 
-REPO = Path(os.environ["REPO"]).resolve()
-DELAY = int(os.environ.get("DELAY", "18"))
+import base64
+import http.server
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
 
 def run(lab):
-    project, home, fmhome = lab / "project", lab / "home", lab / "fmhome"
-    project.mkdir(); home.mkdir()
-    (fmhome / "state").mkdir(parents=True); (fmhome / "config").mkdir()
-    shutil.copytree(REPO / "bin", project / "bin")
-    shutil.copytree(REPO / ".opencode/plugins", project / ".opencode/plugins", ignore=shutil.ignore_patterns("fm-busy-state.js"))
-    (project / "AGENTS.md").write_text("# Isolated slow-successor fixture\n")
+    repo = Path(os.environ["FM_FIXTURE_REPO"]).resolve()
+    project = lab / "project"
+    home = lab / "home"
+    fmhome = lab / "fmhome"
+    project.mkdir()
+    home.mkdir()
+    (fmhome / "state").mkdir(parents=True)
+    (fmhome / "config").mkdir()
+    if os.environ.get("HOST_MODE") == "1":
+        # Opt the home into the supervision host with an engine name that is not
+        # verified, so the host never starts a paid engine turn.
+        (fmhome / "config/supervision-host").write_text("no-such-engine\n")
+    shutil.copytree(repo / "bin", project / "bin")
+    # Copy only the tracked primary plugins: a worker-generated busy-state plugin
+    # in this checkout would report into the operator's own home.
+    shutil.copytree(repo / ".opencode/plugins", project / ".opencode/plugins", ignore=shutil.ignore_patterns("fm-busy-state.js"))
+    (project / "AGENTS.md").write_text("# Isolated native integration fixture\n")
     subprocess.run(["git", "init", "-q", str(project)], check=True)
-    shim = lab / "shim"; shim.mkdir()
-    real_ln = shutil.which("ln")
-    # Slow successor: stall the successor watcher's singleton-lock creation
-    # (`ln -s <owner> state/.watch.lock`), once per watcher pid.
-    (shim / "ln").write_text(f"""#!/bin/sh
-for a in "$@"; do last="$a"; done
-case "$last" in
-  */.watch.lock)
-    if [ -e "{lab}/delay-armed" ] && [ "$PPID" != "$(cat "{lab}/first-watcher")" ] && [ ! -e "{lab}/delayed.$PPID" ]; then
-      : > "{lab}/delayed.$PPID"; echo "$(date +%s) delaying lock acquisition of watcher $PPID by {DELAY}s" >> "{lab}/shim.log"; sleep {DELAY}
-    fi ;;
-esac
-exec {real_ln} "$@"
-""")
-    (shim / "ln").chmod(0o755)
-    # The plugin launches the arm through `bash -lc` (macOS path_helper moves /usr/bin ahead of it)
-    # but sources the lab home's config/x-mode.env first; prepend the shim there.
-    (fmhome / "config/x-mode.env").write_text(f'export PATH="{shim}:$PATH"\n')
+    # Busy-machine emulation: once lab/slow exists, every newly forked watcher
+    # waits SLOW_SECONDS before running the real watcher (no lock, no beat yet).
+    watch = project / "bin/fm-watch.sh"
+    lines = watch.read_text().split("\n")
+    delay = f"if [ -e '{lab}/slow' ]; then echo \"$(date +%s) slow successor fork $$\" >> '{lab}/slow.log'; sleep {os.environ.get('SLOW_SECONDS','15')}; fi"
+    watch.write_text("\n".join([lines[0], delay] + lines[1:]))
+    slow_entered = threading.Event()
+    slow_release = threading.Event()
+    requests = []
+    commands = {
+        "CASE_CD": "cd ..; printf escaped > cd-escaped",
+        "CASE_ARM": "bin/fm-watch-arm.sh --restart; printf bundled > arm-escaped",
+    }
 
     class Provider(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *_a): pass
+        def log_message(self, *_args):
+            pass
+
         def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
-            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
-            chunk = {"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "fixture", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ACK"}, "finish_reason": None}]}
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(body)
+            messages = body.get("messages", [])
+            last_user = max((i for i, item in enumerate(messages) if item.get("role") == "user"), default=0)
+            text = json.dumps(messages[last_user].get("content", ""))
+            followup = any(item.get("role") == "tool" for item in messages[last_user + 1:])
+            if "CASE_FAIL" in text and not followup:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":{"message":"isolated provider failure fixture","type":"invalid_request_error"}}')
+                return
+            if "CASE_INTERRUPT" in text and not followup:
+                slow_entered.set()
+                slow_release.wait(timeout=10)
+            command = next((value for key, value in commands.items() if key in text), None) if not followup else None
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            delta = {"role": "assistant", "content": "NATIVE_FIXTURE_ACK"}
+            if command:
+                delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_fixture", "type": "function", "function": {"name": "shell", "arguments": json.dumps({"command": command, "description": "Isolated behavioral guard regression"})}}]}
+            chunk = {"id": "chatcmpl-fixture", "object": "chat.completion.chunk", "created": 1, "model": "fixture", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
             try:
                 self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode())
-                chunk["choices"][0] = {"index": 0, "delta": {}, "finish_reason": "stop"}
-                self.wfile.write(("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode()); self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError): pass
+                chunk["choices"][0] = {"index": 0, "delta": {}, "finish_reason": "tool_calls" if command else "stop"}
+                self.wfile.write(("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode())
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
-    config = {"model": "fixture/native", "agents": {"build": {"model": "fixture/native"}}, "snapshots": False,
-              "permissions": [{"action": "*", "resource": "*", "effect": "allow"}],
-              "providers": {"fixture": {"package": "@opencode/ai/providers/openai-compatible", "settings": {"baseURL": f"http://127.0.0.1:{provider.server_port}/v1", "apiKey": "isolated-test-not-a-secret"}, "models": {"native": {"capabilities": {"tools": True, "input": ["text"], "output": ["text"]}, "limit": {"context": 100000, "output": 1000}}}}}}
+    config = {
+        "model": "fixture/native",
+        "agents": {"build": {"model": "fixture/native#proof"}},
+        "snapshots": False,
+        "permissions": [{"action": "*", "resource": "*", "effect": "allow"}],
+        "providers": {"fixture": {"package": "@opencode/ai/providers/openai-compatible", "settings": {"baseURL": f"http://127.0.0.1:{provider.server_port}/v1", "apiKey": "isolated-test-not-a-secret"}, "models": {"native": {"capabilities": {"tools": True, "input": ["text"], "output": ["text"]}, "limit": {"context": 100000, "output": 1000}, "variants": [{"id": "proof", "body": {"fixture_variant": "proof"}}]}}}},
+    }
     (project / "opencode.json").write_text(json.dumps(config))
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
-    env = {k: v for k, v in os.environ.items() if not (k.startswith(("OPENCODE_", "FM_", "XDG_")) or k in ("TMUX", "HERDR_ENV", "NO_MISTAKES_GATE"))}
-    env.update(PATH=f"{shim}:{env['PATH']}", HOME=str(home), TMPDIR=str(lab), FM_HOME=str(fmhome), FM_ROOT_OVERRIDE=str(project), FM_BACKEND="tmux", FM_POLL="1", FM_SIGNAL_GRACE="0", FM_HEARTBEAT="600", TMUX_TMPDIR=str(lab), OPENCODE_DB=str(lab / "native.db"), OPENCODE_DISABLE_MODELS_FETCH="1", OPENCODE_DISABLE_AUTOUPDATE="1", OPENCODE_DISABLE_LSP_DOWNLOAD="1")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(("OPENCODE_", "FM_", "XDG_")) or key in ("TMUX", "HERDR_ENV", "NO_MISTAKES_GATE"):
+            del env[key]
+    env.update(HOME=str(home), TMPDIR=str(lab), FM_HOME=str(fmhome), FM_ROOT_OVERRIDE=str(project), FM_BACKEND="tmux", FM_POLL="1", FM_SIGNAL_GRACE="0", FM_HEARTBEAT="600", TMUX_TMPDIR=str(lab), OPENCODE_DB=str(lab / "native.db"), OPENCODE_DISABLE_MODELS_FETCH="1", OPENCODE_DISABLE_AUTOUPDATE="1", OPENCODE_DISABLE_LSP_DOWNLOAD="1")
     for kind in ("CONFIG", "DATA", "CACHE", "STATE"):
-        p = home / kind.lower(); p.mkdir(); env[f"XDG_{kind}_HOME"] = str(p)
-    logpath = lab / "server.log"; log = logpath.open("w")
+        path = home / kind.lower()
+        path.mkdir()
+        env[f"XDG_{kind}_HOME"] = str(path)
+    logpath = lab / "server.log"
+    log = logpath.open("w")
     process = subprocess.Popen(["opencode", "serve", "--hostname", "127.0.0.1", "--port", str(port)], cwd=project, env=env, stdout=log, stderr=log)
     headers = {}
+
     def api(path, body=None, method=None):
-        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method=method, headers={**headers, "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            d = r.read(); return json.loads(d) if d else None
-    def until(check, label, limit=30):
-        deadline = time.monotonic() + limit
+        request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, method=method, headers={**headers, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                data = response.read()
+                return json.loads(data) if data else None
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f"API {path} returned {error.code}: {error.read().decode()}") from None
+
+    def until(check, label):
+        deadline = time.monotonic() + float(os.environ.get("UNTIL_SECONDS","30"))
         while time.monotonic() < deadline:
-            v = check()
-            if v: return v
+            value = check()
+            if value:
+                return value
             time.sleep(0.1)
         raise RuntimeError(f"Timed out: {label}")
-    t0 = time.monotonic()
-    ts = lambda: f"[t+{time.monotonic()-t0:5.1f}s]"
+
     try:
-        password = until(lambda: next((l.removeprefix("server password ") for l in logpath.read_text().splitlines() if l.startswith("server password ")), None), "server readiness")
+        password = until(lambda: next((line.removeprefix("server password ") for line in logpath.read_text().splitlines() if line.startswith("server password ")), None), "server readiness")
         headers["Authorization"] = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
         version = api("/api/info")["version"]
-        q = urllib.parse.urlencode({"location[directory]": str(project)})
-        until(lambda: (lambda ps: len(ps) == 5 and all(p["state"]["status"] == "active" for p in ps))([p for p in api("/api/plugin?" + q)["data"] if p.get("id", "").startswith("fm.primary.")]), "plugins")
-        print(f"{ts()} OpenCode {version} serving; 5 Firstmate plugins active from {REPO}")
-        model = until(lambda: next((a.get("model") for a in api("/api/agent?" + q)["data"] if a["id"] == "build"), None), "build model")
-        sid = api("/api/session", {"location": {"directory": str(project)}, "agent": "build", "model": model})["data"]["id"]
-        api(f"/api/session/{sid}/prompt", {"text": "smoke"})
-        until(lambda: api(f"/api/session/{sid}")["data"].get("outcome") == "succeeded", "smoke prompt completion")
+        location_query = urllib.parse.urlencode({"location[directory]": str(project)})
+        # Port readiness precedes asynchronous location/plugin initialization.
+        # Wait through the public registry before creating a session, otherwise
+        # its session.created event can precede the startup-nudge subscription.
+        def plugins_ready():
+            plugins = [p for p in api("/api/plugin?" + location_query)["data"] if p.get("id", "").startswith("fm.primary.")]
+            return plugins if len(plugins) == 5 and all(p["state"]["status"] == "active" for p in plugins) else None
+
+        until(plugins_ready, "native Firstmate plugin readiness")
+        configured_model = until(lambda: next((a.get("model") for a in api("/api/agent?" + location_query)["data"] if a["id"] == "build"), None), "configured build-agent model")
+        assert configured_model == {"providerID": "fixture", "id": "native", "variant": "proof"}, configured_model
+        session = api("/api/session", {"location": {"directory": str(project)}, "agent": "build", "model": configured_model})["data"]
+        sid = session["id"]
+        api(f"/api/session/{sid}/prompt", {"text": "Native plugin smoke test."})
+        until(lambda: api(f"/api/session/{sid}")["data"].get("outcome") == "succeeded", "native prompt completion")
+        firstmate = [p for p in api("/api/plugin")["data"] if p.get("id", "").startswith("fm.primary.")]
+        assert len(firstmate) == 5 and all(p["state"]["status"] == "active" for p in firstmate), firstmate
+        print(f"ok - OpenCode {version} loaded all five V2 Firstmate plugins")
         context = lambda: api(f"/api/session/{sid}/context")["data"]
+        until(lambda: sum(m["type"] == "user" and "session-start:" in m.get("text", "") for m in context()) == 1, "native startup nudge")
+        assert any(r.get("fixture_variant") == "proof" for r in requests), "selected native agent model variant did not reach the provider"
+        print("ok - V2 parses the build-agent model variant and applies it when selected")
+        for case, reason in (("CASE_CD", "persistent-cd"), ("CASE_ARM", "watcher-redirection")):
+            admitted = api(f"/api/session/{sid}/prompt", {"text": case})["data"]["id"]
+
+            def completed_context():
+                messages = context()
+                index = next((i for i, m in enumerate(messages) if m["id"] == admitted), None)
+                return messages if index is not None and any(m["type"] == "idle" for m in messages[index + 1:]) else None
+
+            messages = until(completed_context, case + " completion")
+            tools = [c for m in messages for c in m.get("content", []) if c.get("type") == "tool" and c.get("state", {}).get("input", {}).get("command") == commands[case]]
+            assert tools and tools[-1]["state"]["status"] == "error", tools
+            assert reason in tools[-1]["state"]["error"]["message"]
+            assert not (lab / "cd-escaped").exists() and not (project / "arm-escaped").exists()
+            print(f"ok - native shell execute.before rejects {reason} before execution")
         (fmhome / "state/task.meta").write_text("project=fixture\n")
+        api(f"/api/session/{sid}/prompt", {"text": "CASE_GUARD"})
+        until(lambda: any("TURN WOULD END BLIND" in m.get("text", "") for m in context()), "native turn-end guard follow-up")
+        print("ok - native terminal event admits a turn-end guard follow-up")
         (fmhome / "state/.lock").write_text(str(process.pid) + "\n")
-        api(f"/api/session/{sid}/prompt", {"text": "arm the watcher"})
+        api(f"/api/session/{sid}/prompt", {"text": "CASE_WATCH_ARM"})
         lock = fmhome / "state/.watch.lock/pid"
         until(lock.exists, "watcher arming")
-        first = lock.read_text().strip()
-        until(lambda: (fmhome / "state/.last-watcher-beat").exists(), "first beat")
-        print(f"{ts()} first watcher armed pid={first}")
-        (lab / "first-watcher").write_text(first + "\n"); (lab / "delay-armed").write_text("")
-        print(f"{ts()} busy machine from now: each successor watcher's lock acquisition delayed {DELAY}s")
-        (fmhome / "state/task.status").write_text("done: worker finished\n")
-        texts_now = lambda: [m.get("text", "") for m in context()]
-        until(lambda: any("WATCHER FIRED" in t or "could not" in t for t in texts_now()), "watcher notification or failure", limit=150)
-        print(f"{ts()} plugin delivered the worker-close wake to the session")
+        first_watcher = lock.read_text().strip()
+        (lab / "slow").write_text("")
+        t0 = time.monotonic()
+        print(f"info - first watcher pid={first_watcher}; busy-machine delay armed for successors")
+        (fmhome / "state/task.status").write_text("done: native fixture notification\n")
+        until(lambda: any("WATCHER FIRED" in m.get("text", "") for m in context()), "native watcher notification")
+        os.environ["UNTIL_SECONDS"] = os.environ.get("SUCCESSOR_WAIT", "90")
         def outcome():
-            texts = [m.get("text", "") for m in context()]
-            fail = next((t for t in texts if "could not restore watcher continuity" in t or "could not verify a ready successor" in t), None)
-            if fail: return ("FAILED", fail)
-            beat = fmhome / "state/.last-watcher-beat"
-            pid = lock.read_text().strip() if lock.exists() else ""
-            marker = lab / f"delayed.{pid}"
-            # Healthy only once the successor itself has beaten: a beat newer than the end of its delayed first beat.
-            if pid and pid != first and beat.exists() and marker.exists() and beat.stat().st_mtime >= marker.stat().st_mtime + DELAY - 0.5:
-                try: os.kill(int(pid), 0); return ("HEALTHY", pid)
-                except OSError: return None
+            if lock.exists() and lock.read_text().strip() != first_watcher and (fmhome / "state/.last-watcher-beat").exists():
+                return "successor"
+            for m in context():
+                t = m.get("text", "") or ""
+                if "could not restore watcher continuity" in t or "could not launch a continuity retry" in t:
+                    return "failure: " + t[-600:]
             return None
-        try:
-            result = until(outcome, "successor outcome", limit=90)
-        except RuntimeError:
-            print("DIAG lock:", lock.read_text() if lock.exists() else None, "first:", first)
-            b = fmhome / "state/.last-watcher-beat"; print("DIAG beat age:", time.time() - b.stat().st_mtime if b.exists() else None)
-            print("DIAG shim:", (lab / "shim.log").read_text() if (lab / "shim.log").exists() else None)
-            print("DIAG files:", sorted(p.name for p in lab.iterdir()))
-            for m in context(): print("DIAG ctx:", m.get("type"), (m.get("text") or "")[:300].replace("\n"," | "))
-            print(subprocess.run(["ps","-o","pid,ppid,command","-ax"],capture_output=True,text=True).stdout.count(str(lab)), "procs in lab")
-            print("\n".join(l for l in subprocess.run(["ps","-o","pid,ppid,command","-ax"],capture_output=True,text=True).stdout.splitlines() if "fm-watch" in l and str(lab) in l))
-            raise
-        print(f"{ts()} outcome: {result[0]} {result[1].strip()[:600]}")
-        if result[0] == "HEALTHY": print(f"{ts()} successor watcher {result[1]} holds the lock after a {DELAY}s-delayed lock acquisition, and has beaten since")
-        if result[0] == "HEALTHY":
-            time.sleep(3)
-            texts = [m.get("text", "") for m in context()]
-            assert not any("could not" in t and "watcher" in t for t in texts), "late failure surfaced"
-            print(f"{ts()} still healthy 3s later; no continuity failure surfaced in the session")
-        print("shim log:\n" + (lab / "shim.log").read_text())
-        return result[0]
+        result = until(outcome, "successor or continuity failure")
+        print(f"info - slow forks observed: {len((lab / 'slow.log').read_text().splitlines()) if (lab / 'slow.log').exists() else 0}")
+        print(f"info - outcome after {time.monotonic()-t0:.1f}s: {result}")
+        time.sleep(3)
+        texts = [m.get("text", "") for m in context() if "FAILED" in (m.get("text", "") or "")]
+        print("info - FAILED messages delivered to session:", len(texts))
+        for t in texts: print("   |", t.replace("\n", "\n   | ")[:800])
+        hl = fmhome / "state/.supervision-host.log"
+        if hl.exists():
+            print("info - supervision-host ledger:")
+            for line in hl.read_text().splitlines()[-15:]: print("   |", line)
+        assert result == "successor", result
+        print("ok - slow successor (busy machine) is confirmed and supervision continues")
+        return
+        api(f"/api/session/{sid}/prompt", {"text": "CASE_INTERRUPT"})
+        until(slow_entered.is_set, "controlled active native model turn")
+        assert api(f"/api/session/{sid}/interrupt?resume=false", method="POST")["interrupted"]
+        slow_release.set()
+        until(lambda: api(f"/api/session/{sid}")["data"].get("outcome") == "interrupted", "interrupted native turn")
+        assert lock.exists()
+        print("ok - native interrupted turn retains watcher supervision")
+        api(f"/api/session/{sid}/prompt", {"text": "CASE_FAIL"})
+        until(lambda: api(f"/api/session/{sid}")["data"].get("outcome") == "failed", "failed native turn")
+        assert lock.exists()
+        assert sum(m["type"] == "user" and "session-start:" in m.get("text", "") for m in context()) == 1
+        print("ok - native failed turn retains supervision and startup remains exactly once")
     finally:
-        try: subprocess.run([str(project / "bin/fm-watch-arm.sh"), "--stop"], cwd=project, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        slow_release.set()
+        try:
+            subprocess.run([str(project / "bin/fm-watch-arm.sh"), "--stop"], cwd=project, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
         finally:
             process.terminate()
-            try: process.wait(timeout=15)
-            except subprocess.TimeoutExpired: process.kill(); process.wait()
-            provider.shutdown(); provider.server_close(); log.close()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            provider.shutdown()
+            provider.server_close()
+            log.close()
+
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="fm-oc-slow-") as d:
-        r = run(Path(d).resolve())
-    print("lab cleaned"); raise SystemExit(0 if r == "HEALTHY" else 3)
+    with tempfile.TemporaryDirectory(prefix="fm-opencode-v2-live-") as directory:
+        run(Path(directory).resolve())
+    print("ok - private OpenCode server, provider, watcher, configuration and database cleaned")

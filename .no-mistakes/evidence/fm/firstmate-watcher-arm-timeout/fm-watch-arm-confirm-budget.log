@@ -1,0 +1,6 @@
+== HEAD default (no FM_ARM_CONFIRM_TIMEOUT), watcher first beat delayed 15s: first status after 16s
+watcher: started pid=27120 (beacon fresh)
+== HEAD explicit FM_ARM_CONFIRM_TIMEOUT=5, watcher delayed 15s (override honored): first status after 6s
+watcher: FAILED - no live watcher with a fresh beacon
+== HEAD default, watcher delayed 40s (beyond 30s budget, must fail bounded): first status after 31s
+watcher: FAILED - no live watcher with a fresh beacon

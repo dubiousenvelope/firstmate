@@ -1,0 +1,32 @@
+ok - OpenCode 2.2.5 loaded all five V2 Firstmate plugins
+ok - V2 parses the build-agent model variant and applies it when selected
+ok - native shell execute.before rejects persistent-cd before execution
+ok - native shell execute.before rejects watcher-redirection before execution
+ok - native terminal event admits a turn-end guard follow-up
+info - first watcher pid=5015; busy-machine delay armed for successors
+info - slow forks observed: 1
+info - outcome after 33.0s: failure: ⁣FIRSTMATE_OP: v1 watcher: WATCHER FIRED - drain queued wakes with bin/fm-wake-drain.sh and handle the reported wake. Watcher continuity is plugin-owned.
+
+signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-opencode-v2-live-7yh_tjox/fmhome/state/task.status
+
+watcher: FAILED - OpenCode could not verify a ready successor watcher (failed)
+watcher: FAILED - OpenCode could not restore watcher continuity because the unready successor arm did not exit within 1000ms
+info - FAILED messages delivered to session: 1
+   | ⁣FIRSTMATE_OP: v1 watcher: WATCHER FIRED - drain queued wakes with bin/fm-wake-drain.sh and handle the reported wake. Watcher continuity is plugin-owned.
+   | 
+   | signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-opencode-v2-live-7yh_tjox/fmhome/state/task.status
+   | 
+   | watcher: FAILED - OpenCode could not verify a ready successor watcher (failed)
+   | watcher: FAILED - OpenCode could not restore watcher continuity because the unready successor arm did not exit within 1000ms
+Traceback (most recent call last):
+  File "~/.no-mistakes/evidence/01M67P39X5AH4678Q0T58P5G2F/opencode-slow-successor.py", line 236, in <module>
+    run(Path(directory).resolve())
+  File "~/.no-mistakes/evidence/01M67P39X5AH4678Q0T58P5G2F/opencode-slow-successor.py", line 203, in run
+    assert result == "successor", result
+AssertionError: failure: ⁣FIRSTMATE_OP: v1 watcher: WATCHER FIRED - drain queued wakes with bin/fm-wake-drain.sh and handle the reported wake. Watcher continuity is plugin-owned.
+
+signal: /private/var/folders/yp/br1r0zqd7dd6vy3g0lpzzchw0000gp/T/fm-opencode-v2-live-7yh_tjox/fmhome/state/task.status
+
+watcher: FAILED - OpenCode could not verify a ready successor watcher (failed)
+watcher: FAILED - OpenCode could not restore watcher continuity because the unready successor arm did not exit within 1000ms
+exit=1 wall=39s

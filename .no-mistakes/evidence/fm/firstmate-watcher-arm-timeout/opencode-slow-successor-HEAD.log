@@ -1,0 +1,12 @@
+ok - OpenCode 2.2.5 loaded all five V2 Firstmate plugins
+ok - V2 parses the build-agent model variant and applies it when selected
+ok - native shell execute.before rejects persistent-cd before execution
+ok - native shell execute.before rejects watcher-redirection before execution
+ok - native terminal event admits a turn-end guard follow-up
+info - first watcher pid=48785; busy-machine delay armed for successors
+info - slow forks observed: 1
+info - outcome after 17.2s: successor
+info - FAILED messages delivered to session: 0
+ok - slow successor (busy machine) is confirmed and supervision continues
+ok - private OpenCode server, provider, watcher, configuration and database cleaned
+exit=0 (run completed: final cleanup line printed only after run() returned without assertion)
